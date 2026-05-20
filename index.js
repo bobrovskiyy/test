@@ -1,7 +1,7 @@
 import TelegramBot from "node-telegram-bot-api";
 import { statusBedrock } from "minecraft-server-util";
 
-const TOKEN = "8837522982:AAE_c3GasGMqe-_neZy_OznvEwHtvx5_Uas";
+const TOKEN = process.env.BOT_TOKEN;
 
 const bot = new TelegramBot(TOKEN, {
     polling: true
@@ -9,6 +9,10 @@ const bot = new TelegramBot(TOKEN, {
 
 const userStates = new Map();
 const activePings = new Map();
+
+function sleep(ms) {
+    return new Promise(r => setTimeout(r, ms));
+}
 
 function mainMenu() {
     return {
@@ -49,7 +53,7 @@ bot.on("callback_query", async (query) => {
 
         await bot.sendMessage(
             chatId,
-            "Отправь IP:PORT и количество проверок\n\nПример:\nplay.server.net:19132 20\n\nЕсли количество не указать — будет бесконечно."
+            "Формат:\nIP:PORT КОЛ-ВО DELAY(ms) MULTIPING\n\nПример:\nplay.server.net:19132 100 1000 5\n\nГде:\n100 = количество\n1000 = задержка\n5 = сколько одновременно пингов\n\nЕсли количество не указать — бесконечно."
         );
     }
 
@@ -104,6 +108,8 @@ bot.on("message", async (msg) => {
     }
 
     let count = Infinity;
+    let delay = 1000;
+    let multiPing = 1;
 
     if (args[1]) {
         const parsed = Number(args[1]);
@@ -111,6 +117,26 @@ bot.on("message", async (msg) => {
         if (!Number.isNaN(parsed) && parsed > 0) {
             count = parsed;
         }
+    }
+
+    if (args[2]) {
+        const parsed = Number(args[2]);
+
+        if (!Number.isNaN(parsed) && parsed >= 0) {
+            delay = parsed;
+        }
+    }
+
+    if (args[3]) {
+        const parsed = Number(args[3]);
+
+        if (!Number.isNaN(parsed) && parsed > 0) {
+            multiPing = parsed;
+        }
+    }
+
+    if (multiPing > 100) {
+        multiPing = 100;
     }
 
     if (activePings.has(chatId)) {
@@ -126,48 +152,74 @@ bot.on("message", async (msg) => {
 
     await bot.sendMessage(
         chatId,
-        `Старт проверки ${host}:${port}`
+        `Старт проверки ${host}:${port}\n` +
+        `Delay: ${delay}ms\n` +
+        `MultiPing: ${multiPing}`
     );
 
     let success = 0;
     let failed = 0;
     let sent = 0;
 
-    while (!pingData.stopped) {
-        if (sent >= count) {
-            break;
+    async function pingWorker(workerId) {
+        while (!pingData.stopped) {
+            if (sent >= count) {
+                break;
+            }
+
+            sent++;
+
+            const currentId = sent;
+
+            const start = Date.now();
+
+            try {
+                const result = await statusBedrock(host, port, {
+                    timeout: 3000
+                });
+
+                success++;
+
+                console.warn(
+                    `[W${workerId}] #${currentId} ` +
+                    `PING ${result.roundTripLatency}ms | ` +
+                    `REAL ${Date.now() - start}ms | ` +
+                    `ONLINE ${result.playersOnline}/${result.playersMax}`
+                );
+
+                await bot.sendMessage(
+                    chatId,
+                    `[W${workerId}] #${currentId}\n` +
+                    `Пинг: ${result.roundTripLatency}ms\n` +
+                    `Real: ${Date.now() - start}ms\n` +
+                    `Онлайн: ${result.playersOnline}/${result.playersMax}`
+                );
+            } catch (e) {
+                failed++;
+
+                console.warn(
+                    `[W${workerId}] #${currentId} ERROR`
+                );
+
+                await bot.sendMessage(
+                    chatId,
+                    `[W${workerId}] #${currentId}\nОшибка/оффлайн`
+                );
+            }
+
+            if (delay > 0) {
+                await sleep(delay);
+            }
         }
-
-        sent++;
-
-        const start = Date.now();
-
-        try {
-            const result = await statusBedrock(host, port, {
-                timeout: 3000
-            });
-
-            success++;
-
-            await bot.sendMessage(
-                chatId,
-                `#${sent}\n` +
-                `Пинг: ${result.roundTripLatency}ms\n` +
-                `Real: ${Date.now() - start}ms\n` +
-                `Онлайн: ${result.playersOnline}/${result.playersMax}`
-            );
-        } catch (e) {
-            failed++;
-
-            await bot.sendMessage(
-                chatId,
-                `#${sent}\nОшибка/оффлайн`
-            );
-        }
-
-        // безопасная задержка
-        await new Promise(r => setTimeout(r, 1000));
     }
+
+    const workers = [];
+
+    for (let i = 1; i <= multiPing; i++) {
+        workers.push(pingWorker(i));
+    }
+
+    await Promise.all(workers);
 
     activePings.delete(chatId);
 
