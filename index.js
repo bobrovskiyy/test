@@ -1,7 +1,7 @@
 import TelegramBot from "node-telegram-bot-api";
 import { statusBedrock } from "minecraft-server-util";
 
-const TOKEN = process.env.BOT_TOKEN;
+const TOKEN = "8837522982:AAE_c3GasGMqe-_neZy_OznvEwHtvx5_Uas"
 
 const bot = new TelegramBot(TOKEN, {
     polling: true
