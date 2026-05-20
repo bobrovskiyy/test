@@ -1,7 +1,7 @@
 import { statusBedrock } from "minecraft-server-util";
 
 const HOST = "dragonland-b8nk.aternos.me";
-const PORT = 19132;
+const PORT = 26317;
 
 let total = 0;
 let success = 0;
